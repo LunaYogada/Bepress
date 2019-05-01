@@ -9,6 +9,7 @@ library(zoo)
 library(scales)
 library(RColorBrewer)
 library(GenSA)
+library(readr)
 
 
 select1<-dplyr::select
@@ -36,13 +37,14 @@ cum_m_uploads <-uploads %>%
   ungroup()
   
   
-# join cummulative upload with download----  
+## join cummulative upload with download
 content<-downloads_m%>%
-  full_join(cum_m_uploads, by = c("site_key", "years", "months"))
+  full_join(cum_m_uploads, by = c("site_key", "years", "months"))%>%
+  arrange(years, months)
 
 content$ttl_uploads[is.na(content$ttl_uploads)] <- 0
 
-# map downloads with total uploads on that date-----
+## map downloads with total uploads on that date
 content_repo<-content%>%  
   group_by(site_key)%>%
   mutate(cum_uploads = ifelse(is.na(cum_uploads), lead(cum_uploads) - lead(ttl_uploads), cum_uploads))%>%
@@ -51,7 +53,6 @@ content_repo<-content%>%
   tidyr::fill(cum_uploads, .direction = c("down"))%>%
   ungroup()%>%
   filter(!site_key %in% c(2,5,8, 1794,2730))
-
 
 describe(content_repo)
 
@@ -74,7 +75,6 @@ describe(content_repo)
 # 
 # lowest :      0      1      2      3      4, highest: 341087 376227 387021 391966 396066
 # ---------------------------------------------------------------------------------------------------------------------------------------
-
 
 # Quantile segments---
 uploads_2019<-
@@ -105,15 +105,43 @@ quantiles_2019 <- quantile(tmp$ttl_uploads, na.rm = T )
 quantiles_2019
 repo_quantile <- content_repo_2019 %>%
   filter(!is.na(ttl_uploads))%>%
+ # filter(date =="2019-01-05" )%>%
   mutate(repo_group =case_when(ttl_uploads <= quantiles_2019[2] ~ "low",
                                ttl_uploads >= quantiles_2019[4] ~ "high",
                                T ~ "medium"
   ))
+
+# Plot uploads density break by group
+repo_quantile%>%
+  filter(date == "2019-01-05")%>%
+  ggplot(aes(x = ttl_uploads, fill = repo_group))+
+  geom_density(alpha = .6) + theme(legend.position = "right")+
+  scale_x_log10(breaks = trans_breaks("log10", function(x) 10^x),
+                labels = trans_format("log10", math_format(10^.x)))+
+  theme_bw()+
+  scale_fill_manual(values=c("medium" = "#3366FF", "high"="green", "low"= "red"))+
+  ggtitle("Distribution of groups for total contents ")+
+  xlab("total contents")
+
 group<-repo_quantile%>%
   distinct(site_key, repo_group)%>%
   ungroup()
 
-##plot histogram----
+## plot downloads of different group----
+repo_quantile%>%
+  ungroup()%>%
+  group_by(repo_group, date)%>%
+  mutate(average = mean(downloads))%>%
+  ggplot(aes(x = date, y = average, color = repo_group))+
+  geom_line()+
+  theme_bw()+
+  scale_color_manual(values=c("medium" = "#3366FF", "high"="green", "low"= "red"))+
+  ylab("downloads")+
+  ggtitle("Average Daily Downloads in 2019 Jan - Apr by Group")
+  
+  
+
+##plot histogram for each metrics----
 
 content_repo%>%
   ggplot()+
@@ -161,81 +189,63 @@ content_repo%>%
     labels = c("0 year", "5 years", "10 years", "15 years"))
   
 
-
 # Create a function to plot total uploads and downloads
 plot_updown<-function(database, sitekey){
   database%>%
     filter(site_key ==sitekey)%>%
-    select1(`ttl_uploads`, `downloads`)%>%
-    ggplot(aes(x = ttl_uploads, y = downloads))+
+    select1(`cum_uploads`, `downloads`)%>%
+    ggplot(aes(x = cum_uploads, y = downloads))+
     geom_point()+
-    geom_smooth(method = "lm")
+    geom_smooth(method = "auto")
 }
 
 for(i in sites$site_key){
   print(i)
-  ggsave(paste0( "plots/up_down",i, "up_down.jpg"), plot = plot_updown(content_repo, i))
+  ggsave(paste0( "plots/cum_uploads/",i, "cum_uploads.jpg"), plot = plot_updown(content_repo, i))
 }
 
 
 # boxplot----
-up_down<-up_down%>%
-  mutate(date=date(glue("{years}-{months}-01")))
+# up_down<-up_down%>%
+#   mutate(date=date(glue("{years}-{months}-01")))
+# 
+# up_down %>%
+#   gather(key = "type",value = "count",downloads,uploads) %>%
+#   filter(date > "2016-01-01") %>%
+#   ggplot() +
+#   geom_boxplot(aes(x=date, y=count, group=date)) +
+#   facet_grid(type~.,scales = "free_y")
 
-g= up_down %>%
-  gather(key = "type",value = "count",downloads,uploads) %>%
-  filter(date > "2016-01-01") %>%
-  ggplot() +
-  geom_boxplot(aes(x=date, y=count, group=date)) +
-  facet_grid(type~.,scales = "free_y")
-g
 
 repo_quantile%>%
   filter(repo_group == "low" )%>%
   ggplot()+
   geom_boxplot(aes(x = date, y = downloads, group = date))
 
-# plot downloads of different group----
-segment_repo<- function(group){
-  repo_quantile %>%
-    ungroup()%>%
-    filter(repo_group == group) %>%
-    group_by(date) %>%
-    summarise(average= mean(downloads)) %>%
-    ungroup()
-}
+
+# x = high_downloads$date
+# y1 = low_downloads$average
+# y2 = medium_downloads$average
+# y3 = high_downloads$average
+#   
+# # First curve is plotted
+# plot(x,y1, type="o", col="red", pch="o", lty=1, ylim=c(0,3000), ylab = "downloads", xlab = "date",
+#      main = "Average Daily Downloads in 2019 Jan - Apr by Group")
+# axis(at = c(as.Date("2019-01-05")), labels = c("Jan 05"),side = 1)
+# 
+# # Add second curve to the same plot by calling points() and lines()
+# # Use symbol '*' for points.
+# points(x, y2, col="blue", pch="*")
+# lines(x, y2, col="blue",lty=2)
+# 
+# points(x, y3, col="green", pch="+")
+# lines(x, y3, col="green",lty=3)
+# 
+# legend("topleft", legend=c("low","medium","high"), col=c("red","blue","green"),
+#        pch=c("o","*","+"),lty=c(1,2,3), ncol=1)
 
 
-low_downloads<-segment_repo("low")
-medium_downloads<-segment_repo("medium")
-high_downloads<-segment_repo("high")
-
-
-x = high_downloads$date
-y1 = low_downloads$average
-y2 = medium_downloads$average
-y3 = high_downloads$average
-  
-# First curve is plotted
-plot(x,y1, type="o", col="red", pch="o", lty=1, ylim=c(0,3000), ylab = "downloads", xlab = "date",
-     main = "Average Daily Downloads in 2019 Jan - Apr by Group")
-axis(at = c(as.Date("2019-01-05")), labels = c("Jan 05"),side = 1)
-
-# Add second curve to the same plot by calling points() and lines()
-# Use symbol '*' for points.
-points(x, y2, col="blue", pch="*")
-lines(x, y2, col="blue",lty=2)
-
-points(x, y3, col="green", pch="+")
-lines(x, y3, col="green",lty=3)
-
-legend("topleft", legend=c("low","medium","high"), col=c("red","blue","green"),
-       pch=c("o","*","+"),lty=c(1,2,3), ncol=1)
-
-mean(y3)/mean(y1) # 28.59818
-
-
-# of total files over times---------
+# total files over times---------
 
 uploads%>%
   arrange(desc(date))
@@ -248,7 +258,6 @@ sites$dummy = 1
 date_site<-sites%>%
   full_join(dates, by = c("dummy"))%>%
   select1(-dummy)
-
 
 full_uploads <-date_site%>%
   left_join(uploads, by = c("site_key", "date"))
@@ -266,17 +275,6 @@ full_uploads<-full_uploads%>%
   inner_join(group, by = c("site_key"))
 
 full_uploads%>%
-  filter(date == "2019-01-05")%>%
-  ggplot(aes(x = ttl_uploads, fill = repo_group))+
-  geom_density(alpha = .6) + theme(legend.position = "right")+
-  scale_x_log10(breaks = trans_breaks("log10", function(x) 10^x),
-                labels = trans_format("log10", math_format(10^.x)))+
-  theme_bw()+
-  scale_fill_manual(values=c("medium" = "#3366FF", "high"="green", "low"= "red"))+
-  ggtitle("Distribution of groups for total contents ")+
-  xlab("total contents")
-
-full_uploads%>%
   group_by(repo_group, date)%>%
   summarise(average= mean(ttl_uploads, na.rm = T))%>%
   ggplot(aes(x = date, y = average, color = repo_group))+
@@ -286,47 +284,6 @@ full_uploads%>%
        title = "Average total contents in year 2002-2019 by group")+
   scale_color_manual(values=c("medium" = "#3366FF", "high"="light green", "low"= "red"))
   
-              
-
-low_uploads<-full_uploads%>%
-  filter(repo_group == "low")%>%
-  group_by(date)%>%
-  summarise(average= mean(ttl_uploads, na.rm = T),
-            counts = n())%>%
-  ungroup()
-
-medium_uploads<-full_uploads%>%
-  filter(repo_group == "medium")%>%
-  group_by(date)%>%
-  summarise(average= mean(ttl_uploads, na.rm = T),
-            counts = n())%>%
-  ungroup()
-
-high_uploads<-full_uploads%>%
-  filter(repo_group == "high")%>%
-  group_by(date)%>%
-  summarise(average= mean(ttl_uploads, na.rm = T),
-            counts = n())%>%
-  ungroup()
-
-
-plot(high_uploads$date, high_uploads$average, type="o", col="dark green", pch="*", lty=1, 
-     ylim = c(0,50000), xlab = "Date", ylab = "Accumulated Uploads",
-     main = "Average Total contents per day from year 2002 to 2019 by group")
-axis(at = c(as.Date("2002-06-01"),as.Date("2019-01-01")), 
-     labels = c(2002, 2019),side = 1)
-
-# Add second curve to the same plot by calling points() and lines()
-# Use symbol '*' for points.
-points(medium_uploads$date, medium_uploads$average, col="blue", pch="*")
-lines(medium_uploads$date, medium_uploads$average, col="blue",lty=2)
-
-points(low_uploads$date, low_uploads$average, col="red", pch="*")
-lines(low_uploads$date, low_uploads$average, col="red",lty=3)
-
-legend("topleft", legend=c("low","medium", "high"), col=c("red","blue","green"),
-       pch=c("*","*","*"),lty=c(1,2,3), ncol=1)
-
 # calculate ratio of download/total files per institution in each group----
 
 downloads%>%
@@ -412,33 +369,7 @@ downloads_m%>%
 193/136 # 1.419
 
 
-plot_all<-function(key){
-  content_repo%>%
-    left_join(group)%>%
-    mutate(date = as.Date(paste(years, months, "01", sep = "-")))%>%
-    filter(site_key == key)%>%
-    ggplot()+
-    geom_line(aes(x = date, y = cum_uploads))+
-    geom_line(aes(x = date, y = ttl_uploads), color = "green")+
-    geom_line(aes(x = date, y = downloads), color = "blue")+
-    ylab("Counts")+
-    theme(legend.position="right")
-}
-
-plot_all(7245055)
-plot_beauty( 2435816)
-
-content_repo%>%
-  filter(site_key == 2064690)
-  filter(years == 2014 & months == 05)
-
-content_repo%>%
-  filter(site_key == 3338972)%>%
-  mutate(date = as.Date(paste(years, months, "01", sep = "-")))%>%
-  filter(date <= "2019-02-01" & date >= "2013-02-01")%>%
-  group_by(site_key)%>%
-  summarise(ttl = sum(downloads)) #  56843 19513
-
+# plot all monthly metrics in same plot-----
 plot_beauty<-function(key){
   data <- content_repo%>%
     left_join(group)%>%
@@ -482,26 +413,10 @@ for(i in sites$site_key){
     }
 }
 
-
-content_repo%>%
-  left_join(group)%>%
-  mutate(date = as.Date(paste(years, months, "01", sep = "-")))%>%
-  filter(site_key == 6297493)%>%
-  ggplot()+
-  geom_line(aes(x = date, y = cum_uploads))+
-  geom_line(aes(x = date, y = ttl_uploads), color = "green")+
-  geom_line(aes(x = date, y = downloads), color = "blue")+
-  ylab("counts")+
-  theme(
-    legend.justification = c("left", "top")
-  )
-
-
-
+# no uploads
 no_uploads<-content_repo%>%
   filter(is.na(ttl_uploads ))%>%
   distinct(site_key)
-
 
 content_repo%>%
   arrange(ttl_uploads)%>%
@@ -645,4 +560,22 @@ post.period <- as.Date(c("2017-03-01", "2019-03-01"))
 impact <- CausalImpact(test_ctrl_m, pre.period, post.period)
 plot(impact)
 
+
+# Calculate accumulated downloads/uploads ratio per IR
+content_repo$downloads[is.na(content_repo$downloads)] <- 0
+
+ratio_list<-content_repo%>%
+  group_by(site_key)%>%
+  arrange(years, months)%>%
+  mutate(ttl_downloads = cumsum(downloads))%>%
+  ungroup()%>%
+  filter(years == 2019 & months ==3 )%>%
+  mutate(ratio = format(ttl_downloads/cum_uploads, scientific=F))%>%
+  select1(site_key, cum_uploads, ttl_downloads,ratio)%>%
+  arrange(desc(ratio))
+
+ratio_list<-ratio_list%>%
+  left_join(website, by = c("site_key" = "Site Key"))
+
+write_csv(ratio_list, "ratio.csv")
 
