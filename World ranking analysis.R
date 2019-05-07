@@ -10,6 +10,7 @@ library(stringr)
 library(CausalImpact)
 library(rccdates)
 library(tseries)
+library(data.table)
 
 # select from multiple packages, define dplyr select
 select1<-dplyr::select
@@ -45,23 +46,68 @@ times<-times%>%
          total_score = parse_number(total_score))
   
 # join dc institution with all year and times ranking
-dc_insitution<-my_cross_join%>%
+dc_institution<-my_cross_join%>%
   left_join(subscription, by =c("name", "year"))%>%
   left_join(times, by = c("name", "year"))%>%
   dplyr::select( name, year, "world_rank", "total_score", "decision")
 
+describe(dc_institution)
+
+filled<-dc_institution%>%
+  group_by(name)%>%
+  filter(!all(is.na(world_rank)))%>%
+  tidyr::fill(world_rank, .direction = c("down"))%>%
+  tidyr::fill(world_rank, .direction = c("up"))%>%
+  tidyr::fill(total_score, .direction = c("down"))%>%
+  tidyr::fill(total_score, .direction = c("up"))
+  
+filled$decision[is.na(filled$decision)] <- 0
+
+filled%>%
+  filter(!year ==2019)%>%
+  group_by(name, decision)%>%
+  summarise(avg_score = mean(total_score))%>%
+  mutate(diff_after := avg_score - shift(avg_score))%>%
+  ungroup()%>%
+ # View()
+  filter(!is.na(diff_after))%>%
+  mutate(increase = ifelse(diff_after > 0, 1, ifelse(diff_after == 0, 0, -1)))%>%
+  group_by(increase)%>%
+  summarise(count = n())
+  
+# # A tibble: 3 x 2
+# increase count
+# <dbl> <int>
+# 1       -1    29
+# 2        0    16
+# 3        1    29
+
+increase_ins<-filled%>%
+  filter(!year ==2019)%>%
+  group_by(name, decision)%>%
+  summarise(avg_score = mean(total_score))%>%
+  mutate(diff_after := avg_score - shift(avg_score))%>%
+  ungroup()%>%
+  # View()
+  filter(!is.na(diff_after))%>%
+  mutate(increase = ifelse(diff_after > 0, 1, ifelse(diff_after == 0, 0, -1)))%>%
+  filter(increase == 1)%>%
+  arrange(desc(diff_after))
+  
+  
 # select dc institution that has an increase in ranking as test group
-Monash<-dc_insitution%>%
+Monash<-dc_institution%>%
   filter(name == "MonashUniversity")%>%
   distinct(year,name,total_score)%>%
   spread(name, total_score)
 
 # select non dc insitution as control group 
-non_dc<-times%>%
+non_dc<-
+  times%>%
   left_join(subscription)%>%
   filter(is.na(`Account ID`) & total_score!="-")%>%
+  filter(!(university_name == "Northeastern University" & country == "China"))%>%
   select1(year,name,total_score)%>%
-  slice(1:1266, 1773:2189,2875:3230)%>%
   spread(name, total_score)%>%
   select_if( ~ !any(is.na(.)))
 
@@ -70,7 +116,7 @@ my_data<-Monash%>%
   inner_join(non_dc)%>%
   select1(-year)%>%
   ts()%>%
-  zoo(year(as.Date(c("2011", "2012", "2013", "2014", "2015", "2016", "2017", "2018", "2019"), format = "%Y")))
+  zoo(year(as.Date(c("2011", "2012",  "2013", "2014", "2015", "2016", "2017", "2018", "2019"), format = "%Y")))
 
 # set pre/post period
 pre.period <- year(as.Date(c("2011", "2013"), format = "%Y"))
